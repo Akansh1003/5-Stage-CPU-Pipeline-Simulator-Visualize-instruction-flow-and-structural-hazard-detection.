@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>5-Stage CPU Pipeline Simulator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:       #ffffff;
+    --bg2:      #f5f5f3;
+    --bg3:      #eeede9;
+    --text:     #1a1a18;
+    --text2:    #6b6b66;
+    --text3:    #9c9a92;
+    --border:   rgba(0,0,0,0.12);
+    --border2:  rgba(0,0,0,0.22);
+    --radius:   8px;
+    --radius-lg:12px;
+    --font-mono:'Menlo','Consolas','Courier New',monospace;
+    --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:    #1e1e1c;
+      --bg2:   #272725;
+      --bg3:   #303030;
+      --text:  #e8e6de;
+      --text2: #9c9a92;
+      --text3: #6b6b66;
+      --border:rgba(255,255,255,0.10);
+      --border2:rgba(255,255,255,0.20);
+    }
+    .stage-IF  { background:#0c2e48!important; color:#85b7eb!important; }
+    .stage-ID  { background:#162a0a!important; color:#97c459!important; }
+    .stage-EX  { background:#2e1e04!important; color:#ef9f27!important; }
+    .stage-MEM { background:#2e0f1a!important; color:#ed93b1!important; }
+    .stage-WB  { background:#1e1540!important; color:#afa9ec!important; }
+    .stage-stall { background:#272725!important; color:#6b6b66!important; }
+    .stage-flush { background:#2e0808!important; color:#f09595!important; }
+    .reg-cell.dirty { background:#2e1e04!important; border-color:#EF9F27!important; }
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg3);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 1.5rem;
+  }
+
+  header {
+    max-width: 900px;
+    margin: 0 auto 1.5rem;
+  }
+  header h1 { font-size: 20px; font-weight: 500; margin-bottom: 4px; }
+  header p  { font-size: 13px; color: var(--text2); }
+
+  .card {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem 1.5rem;
+    max-width: 900px;
+    margin: 0 auto 1rem;
+  }
+
+  .section-label {
+    font-size: 11px; font-weight: 500; color: var(--text2);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 1rem 0 0.5rem;
+  }
+  .section-label:first-child { margin-top: 0; }
+
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+
+  button {
+    font-family: var(--font-sans);
+    font-size: 12px; padding: 5px 14px;
+    background: transparent;
+    border: 0.5px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: var(--bg2); }
+  button:active { transform: scale(0.97); }
+
+  input[type=range] {
+    accent-color: var(--text2);
+    width: 80px; cursor: pointer;
+  }
+  input[type=number] {
+    font-family: var(--font-sans);
+    font-size: 12px; padding: 3px 6px; width: 46px;
+    border: 0.5px solid var(--border2);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  textarea {
+    font-family: var(--font-mono);
+    font-size: 12px; width: 100%; padding: 8px 12px;
+    border: 0.5px solid var(--border2);
+    border-radius: var(--radius);
+    background: var(--bg2);
+    color: var(--text);
+    resize: vertical; min-height: 100px;
+    line-height: 1.6;
+  }
+
+  .cfg-row { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text2); align-items: center; }
+  .cfg-row label { display: flex; align-items: center; gap: 5px; }
+
+  .speed-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
+  .cycle-label { font-size: 12px; color: var(--text2); margin-left: 4px; }
+  .cycle-label strong { color: var(--text); }
+
+  .res-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .res-card { background: var(--bg2); border-radius: var(--radius); border: 0.5px solid var(--border); padding: 10px 14px; }
+  .res-card .res-name { font-size: 11px; font-weight: 500; color: var(--text2); margin-bottom: 6px; }
+  .res-bar { height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; }
+  .res-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+  .res-status { font-size: 11px; margin-top: 4px; }
+  .res-busy { color: #A32D2D; } .res-free { color: #0F6E56; }
+
+  .pipeline-table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; min-width: 100%; font-size: 12px; }
+  th, td { padding: 6px 10px; border: 0.5px solid var(--border); text-align: center; white-space: nowrap; }
+  th { background: var(--bg2); color: var(--text2); font-weight: 500; font-size: 11px; }
+  td.instr-name { text-align: left; font-weight: 500; color: var(--text); font-family: var(--font-mono); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+  .stage-IF   { background:#E6F1FB; color:#0C447C; }
+  .stage-ID   { background:#EAF3DE; color:#27500A; }
+  .stage-EX   { background:#FAEEDA; color:#633806; }
+  .stage-MEM  { background:#FBEAF0; color:#72243E; }
+  .stage-WB   { background:#EEEDFE; color:#3C3489; }
+  .stage-stall{ background:#f0ede8; color:#9c9a92; font-style:italic; }
+  .stage-flush{ background:#FCEBEB; color:#A32D2D; font-style:italic; }
+
+  .hazard-log { font-size: 12px; background: var(--bg2); border-radius: var(--radius); border: 0.5px solid var(--border); padding: 0.75rem 1rem; max-height: 140px; overflow-y: auto; }
+  .hazard-log div { padding: 3px 0; border-bottom: 0.5px solid var(--border); }
+  .hazard-log div:last-child { border: none; }
+  .haz-data   { color: #BA7517; }
+  .haz-ctrl   { color: #A32D2D; }
+  .haz-struct { color: #534AB7; }
+  .haz-fwd    { color: #0F6E56; }
+  .haz-none   { color: var(--text3); }
+
+  .reg-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+  .reg-cell { font-size: 11px; background: var(--bg2); border-radius: 4px; padding: 5px 2px; text-align: center; border: 0.5px solid var(--border); font-family: var(--font-mono); }
+  .reg-cell .reg-name { display: block; font-size: 10px; color: var(--text2); margin-bottom: 2px; font-family: var(--font-sans); }
+  .reg-cell.dirty { border-color: #EF9F27; background: #fef3e2; }
+
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; margin-top: 0.5rem; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+  footer { max-width: 900px; margin: 0 auto; font-size: 11px; color: var(--text3); text-align: center; padding: 0.5rem 0 1.5rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>5-Stage CPU Pipeline Simulator</h1>
+  <p>Visualise instruction flow through IF → ID → EX → MEM → WB with data, control, and structural hazard detection.</p>
+</header>
+
+<div class="card">
+  <div class="section-label">Controls</div>
+  <div class="controls">
+    <button onclick="step()">Step ▶</button>
+    <button onclick="autoRun()" id="run-btn">Auto ▶▶</button>
+    <button onclick="resetSim()">Reset</button>
+    <div class="speed-wrap">
+      Speed
+      <input type="range" min="100" max="1200" step="100" value="700" id="speed-slider">
+      <span id="speed-label">700ms</span>
+    </div>
+    <span class="cycle-label">Cycle: <strong id="cycle-counter">0</strong></span>
+  </div>
+
+  <div class="section-label">Hardware configuration</div>
+  <div class="cfg-row">
+    <label>ALU units <input type="number" id="cfg-alu" value="1" min="1" max="4"></label>
+    <label>Memory ports <input type="number" id="cfg-mem" value="1" min="1" max="2"></label>
+    <label>WB ports <input type="number" id="cfg-wb" value="1" min="1" max="2"></label>
+    <button onclick="resetSim()">Apply</button>
+    <span style="font-size:11px;color:var(--text3)">↑ change these to trigger or eliminate structural hazards</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-label">Instructions</div>
+  <textarea id="instr-input">ADD R1, R2, R3
+MUL R4, R5, R6
+LW  R7, 0(R1)
+LW  R2, 4(R1)
+ADD R8, R4, R7
+SW  R8, 8(R1)</textarea>
+  <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+    <button onclick="loadInstructions()">Load</button>
+    <button onclick="loadPreset('struct')">Preset: structural hazards</button>
+    <button onclick="loadPreset('mixed')">Preset: all hazards</button>
+    <button onclick="loadPreset('clean')">Preset: no hazards</button>
+  </div>
+  <p style="font-size:11px;color:var(--text3);margin-top:6px">Supported: ADD/SUB/MUL/AND/OR/XOR/SLT R,R,R &nbsp;|&nbsp; LW/SW R,offset(R) &nbsp;|&nbsp; BEQ/BNE/BLT/BGT R,R</p>
+</div>
+
+<div class="card">
+  <div class="section-label">Resource utilisation</div>
+  <div class="res-grid">
+    <div class="res-card">
+      <div class="res-name">ALU</div>
+      <div class="res-bar"><div class="res-bar-fill" id="bar-alu" style="background:#EF9F27;width:0%"></div></div>
+      <div id="lbl-alu" class="res-status res-free">free</div>
+    </div>
+    <div class="res-card">
+      <div class="res-name">Memory</div>
+      <div class="res-bar"><div class="res-bar-fill" id="bar-mem" style="background:#D4537E;width:0%"></div></div>
+      <div id="lbl-mem" class="res-status res-free">free</div>
+    </div>
+    <div class="res-card">
+      <div class="res-name">IF bus</div>
+      <div class="res-bar"><div class="res-bar-fill" id="bar-if" style="background:#378ADD;width:0%"></div></div>
+      <div id="lbl-if" class="res-status res-free">free</div>
+    </div>
+    <div class="res-card">
+      <div class="res-name">WB port</div>
+      <div class="res-bar"><div class="res-bar-fill" id="bar-wb" style="background:#534AB7;width:0%"></div></div>
+      <div id="lbl-wb" class="res-status res-free">free</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-label">Pipeline timing diagram</div>
+  <div class="pipeline-table-wrap">
+    <table><thead id="pipeline-head"></thead><tbody id="pipeline-body"></tbody></table>
+  </div>
+  <div class="legend">
+    <span class="legend-item"><span class="legend-dot stage-IF"></span>IF — Instruction Fetch</span>
+    <span class="legend-item"><span class="legend-dot stage-ID"></span>ID — Decode</span>
+    <span class="legend-item"><span class="legend-dot stage-EX"></span>EX — Execute</span>
+    <span class="legend-item"><span class="legend-dot stage-MEM"></span>MEM — Memory</span>
+    <span class="legend-item"><span class="legend-dot stage-WB"></span>WB — Write Back</span>
+    <span class="legend-item"><span class="legend-dot stage-stall"></span>stall</span>
+    <span class="legend-item"><span class="legend-dot stage-flush"></span>flush</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-label">Hazard log</div>
+  <div class="hazard-log" id="hazard-log"><div class="haz-none">No hazards yet.</div></div>
+  <p style="font-size:11px;color:var(--text3);margin-top:6px">
+    <span style="color:#534AB7">■</span> Structural &nbsp;
+    <span style="color:#BA7517">■</span> Data (RAW) &nbsp;
+    <span style="color:#0F6E56">■</span> Data (forwarded) &nbsp;
+    <span style="color:#A32D2D">■</span> Control
+  </p>
+</div>
+
+<div class="card">
+  <div class="section-label">Register file</div>
+  <div class="reg-grid" id="reg-grid"></div>
+  <p style="font-size:11px;color:var(--text3);margin-top:8px">Highlighted registers have been written this simulation run. Values are symbolic.</p>
+</div>
+
+<footer>5-Stage CPU Pipeline Simulator &mdash; generated with Claude</footer>
+
+<script>
+const STAGES = ['IF','ID','EX','MEM','WB'];
+const STAGE_COL = {IF:'stage-IF',ID:'stage-ID',EX:'stage-EX',MEM:'stage-MEM',WB:'stage-WB'};
+const NUM_REGS = 8;
+
+let instructions = [], cycle = 0, pipeline = [];
+let regFile = new Array(NUM_REGS).fill(0);
+let regDirty = new Array(NUM_REGS).fill(false);
+let hazardLog = [], instrHistory = [], instrCount = 0;
+let running = false, runInterval = null;
+let resCycles = {alu:0, mem:0, wb:0, iff:0, total:0};
+
+function cfgALU() { return Math.max(1, +document.getElementById('cfg-alu').value||1); }
+function cfgMEM() { return Math.max(1, +document.getElementById('cfg-mem').value||1); }
+function cfgWB()  { return Math.max(1, +document.getElementById('cfg-wb').value||1);  }
+
+function decode(line) {
+  line = line.trim();
+  if (!line || line.startsWith('#')) return null;
+  const m1 = line.match(/^(MUL|ADD|SUB|AND|OR|XOR|SLT)\s+R(\d+),\s*R(\d+),\s*R(\d+)/i);
+  if (m1) return {raw:line, op:m1[1].toUpperCase(), rd:+m1[2], rs1:+m1[3], rs2:+m1[4], type:'R', usesALU:true, usesMEM:false};
+  const m2 = line.match(/^(LW)\s+R(\d+),\s*[\d-]+\(R(\d+)\)/i);
+  if (m2) return {raw:line, op:'LW', rd:+m2[2], rs1:+m2[3], rs2:null, type:'LOAD', usesALU:true, usesMEM:true};
+  const m3 = line.match(/^(SW)\s+R(\d+),\s*[\d-]+\(R(\d+)\)/i);
+  if (m3) return {raw:line, op:'SW', rd:null, rs1:+m3[3], rs2:+m3[2], type:'STORE', usesALU:true, usesMEM:true};
+  const m4 = line.match(/^(BEQ|BNE|BLT|BGT)\s+R(\d+),\s*R(\d+)/i);
+  if (m4) return {raw:line, op:m4[1].toUpperCase(), rd:null, rs1:+m4[2], rs2:+m4[3], type:'BRANCH', usesALU:true, usesMEM:false};
+  return {raw:line, op:line.split(/\s/)[0].toUpperCase(), rd:null, rs1:null, rs2:null, type:'OTHER', usesALU:false, usesMEM:false};
+}
+
+function loadInstructions() {
+  const lines = document.getElementById('instr-input').value.split('\n');
+  instructions = lines.map(decode).filter(Boolean);
+  resetSim(false);
+}
+
+const PRESETS = {
+  struct: `ADD R1, R2, R3\nMUL R4, R5, R6\nLW  R7, 0(R1)\nLW  R2, 4(R1)\nADD R8, R4, R7\nSW  R8, 8(R1)`,
+  mixed:  `LW  R1, 0(R0)\nADD R2, R1, R1\nLW  R3, 4(R0)\nBEQ R2, R3, label\nSW  R2, 8(R0)\nLW  R4, 0(R3)`,
+  clean:  `ADD R1, R2, R3\nSUB R4, R5, R6\nAND R7, R0, R0\nOR  R2, R3, R4\nXOR R5, R6, R7`
+};
+
+function loadPreset(name) {
+  document.getElementById('instr-input').value = PRESETS[name];
+  loadInstructions();
+}
+
+function resetSim(reload=true) {
+  if (reload) loadInstructions();
+  cycle = 0; pipeline = [];
+  regFile = new Array(NUM_REGS).fill(0);
+  regDirty = new Array(NUM_REGS).fill(false);
+  hazardLog = []; instrHistory = instructions.map(()=>({})); instrCount = 0;
+  resCycles = {alu:0, mem:0, wb:0, iff:0, total:0};
+  stopAuto(); render();
+}
+
+function autoRun() {
+  if (running) { stopAuto(); return; }
+  running = true;
+  document.getElementById('run-btn').textContent = 'Pause ⏸';
+  runInterval = setInterval(step, +document.getElementById('speed-slider').value);
+}
+function stopAuto() {
+  running = false;
+  document.getElementById('run-btn').textContent = 'Auto ▶▶';
+  clearInterval(runInterval);
+}
+document.getElementById('speed-slider').oninput = function() {
+  document.getElementById('speed-label').textContent = this.value + 'ms';
+  if (running) { stopAuto(); autoRun(); }
+};
+
+function step() {
+  if (instrCount >= instructions.length && pipeline.length === 0) { stopAuto(); return; }
+  cycle++;
+  resCycles.total++;
+
+  let aluUsed = pipeline.filter(p=>p.stage==='EX' && p.instr.usesALU && !p.stalled).length;
+  let memUsed = pipeline.filter(p=>p.stage==='MEM' && p.instr.usesMEM && !p.stalled).length;
+  let wbUsed  = pipeline.filter(p=>p.stage==='WB' && !p.stalled).length;
+  let ifUsed  = pipeline.filter(p=>p.stage==='IF' && !p.stalled).length + (instrCount < instructions.length ? 1 : 0);
+  if (aluUsed) resCycles.alu++;
+  if (memUsed) resCycles.mem++;
+  if (wbUsed)  resCycles.wb++;
+  if (ifUsed)  resCycles.iff++;
+
+  const inID  = pipeline.find(p=>p.stage==='ID' && !p.stalled);
+  const inEX  = pipeline.find(p=>p.stage==='EX');
+  const inMEM = pipeline.find(p=>p.stage==='MEM');
+
+  // Structural: ALU
+  const exInstrs = pipeline.filter(p=>p.stage==='EX' && p.instr.usesALU);
+  if (exInstrs.length > cfgALU()) {
+    hazardLog.unshift({cycle, msg:`Structural hazard (ALU): ${exInstrs.length} instructions competing for ${cfgALU()} ALU unit(s)`, cls:'haz-struct'});
+    exInstrs[exInstrs.length-1].stalled = true;
+  }
+  // Structural: Memory
+  const memInstrs = pipeline.filter(p=>p.stage==='MEM' && p.instr.usesMEM);
+  if (memInstrs.length > cfgMEM()) {
+    hazardLog.unshift({cycle, msg:`Structural hazard (MEM): ${memInstrs.length} memory ops competing for ${cfgMEM()} port(s)`, cls:'haz-struct'});
+    memInstrs[memInstrs.length-1].stalled = true;
+  }
+  // Structural: WB
+  const wbInstrs = pipeline.filter(p=>p.stage==='WB');
+  if (wbInstrs.length > cfgWB()) {
+    hazardLog.unshift({cycle, msg:`Structural hazard (WB): ${wbInstrs.length} writebacks competing for ${cfgWB()} port(s)`, cls:'haz-struct'});
+    wbInstrs[wbInstrs.length-1].stalled = true;
+  }
+
+  // Data: load-use stall
+  if (inID && inEX && inEX.instr.type==='LOAD' && inEX.instr.rd !== null &&
+      (inEX.instr.rd===inID.instr.rs1 || inEX.instr.rd===inID.instr.rs2)) {
+    hazardLog.unshift({cycle, msg:`Data hazard (load-use stall): ${inEX.instr.raw} → ${inID.instr.raw}`, cls:'haz-data'});
+    inID.stalled = true;
+  } else if (inID && inEX && inEX.instr.rd !== null &&
+      (inEX.instr.rd===inID.instr.rs1 || inEX.instr.rd===inID.instr.rs2)) {
+    hazardLog.unshift({cycle, msg:`Data hazard (EX forwarding): R${inEX.instr.rd} → ${inID.instr.raw}`, cls:'haz-fwd'});
+  }
+  if (inID && inMEM && inMEM.instr.rd !== null &&
+      (inMEM.instr.rd===inID.instr.rs1 || inMEM.instr.rd===inID.instr.rs2)) {
+    hazardLog.unshift({cycle, msg:`Data hazard (MEM forwarding): R${inMEM.instr.rd} → ${inID.instr.raw}`, cls:'haz-fwd'});
+  }
+
+  // Control: branch flush
+  if (inEX && inEX.instr.type==='BRANCH') {
+    pipeline.filter(p=>p.stage==='IF'||p.stage==='ID').forEach(p=>{ p.flushed=true; });
+    hazardLog.unshift({cycle, msg:`Control hazard: branch ${inEX.instr.raw} resolves → flush IF/ID`, cls:'haz-ctrl'});
+  }
+
+  if (hazardLog.length > 50) hazardLog.length = 50;
+
+  let toRemove = [];
+  pipeline.forEach(p => {
+    const iIdx = instructions.indexOf(p.instr);
+    instrHistory[iIdx][cycle] = p.flushed ? '—' : (p.stalled ? 'stall' : p.stage);
+    if (p.stalled) { p.stalled = false; return; }
+    if (p.flushed) { toRemove.push(p); return; }
+    const si = STAGES.indexOf(p.stage);
+    if (p.stage === 'MEM' && p.instr.rd !== null) {
+      regFile[p.instr.rd] = Math.floor(Math.random()*256);
+      regDirty[p.instr.rd] = true;
+    }
+    if (si < STAGES.length - 1) p.stage = STAGES[si+1];
+    else toRemove.push(p);
+  });
+  toRemove.forEach(p=>{ const i=pipeline.indexOf(p); if(i>-1) pipeline.splice(i,1); });
+
+  const hasIF = pipeline.find(p=>p.stage==='IF');
+  if (!hasIF && instrCount < instructions.length) {
+    const instr = instructions[instrCount++];
+    pipeline.push({instr, stage:'IF', stalled:false, flushed:false});
+    instrHistory[instrCount-1][cycle] = 'IF';
+  }
+
+  render();
+}
+
+function render() {
+  document.getElementById('cycle-counter').textContent = cycle;
+
+  const t = Math.max(resCycles.total, 1);
+  function updateBar(barId, lblId, used) {
+    const pct = Math.round(used / t * 100);
+    document.getElementById(barId).style.width = pct + '%';
+    const lbl = document.getElementById(lblId);
+    lbl.textContent = used > 0 ? `busy ${pct}% of cycles` : 'free';
+    lbl.className = 'res-status ' + (used > 0 ? 'res-busy' : 'res-free');
+  }
+  updateBar('bar-alu','lbl-alu',resCycles.alu);
+  updateBar('bar-mem','lbl-mem',resCycles.mem);
+  updateBar('bar-if', 'lbl-if', resCycles.iff);
+  updateBar('bar-wb', 'lbl-wb', resCycles.wb);
+
+  const maxCycle = Math.max(cycle, 1);
+  const thead = document.getElementById('pipeline-head');
+  const tbody = document.getElementById('pipeline-body');
+  thead.innerHTML = ''; tbody.innerHTML = '';
+
+  const hRow = document.createElement('tr');
+  const thI = document.createElement('th'); thI.textContent = 'Instruction'; thI.style.textAlign='left'; hRow.appendChild(thI);
+  for (let c=1; c<=maxCycle; c++) { const th=document.createElement('th'); th.textContent='C'+c; hRow.appendChild(th); }
+  thead.appendChild(hRow);
+
+  instructions.forEach((instr, idx) => {
+    const tr = document.createElement('tr');
+    const tdN = document.createElement('td'); tdN.className='instr-name'; tdN.textContent=instr.raw; tr.appendChild(tdN);
+    for (let c=1; c<=maxCycle; c++) {
+      const td = document.createElement('td');
+      const s = instrHistory[idx][c];
+      if (s==='—')      { td.textContent='—';     td.className='stage-flush';  }
+      else if (s==='stall') { td.textContent='stall'; td.className='stage-stall'; }
+      else if (s)       { td.textContent=s;        td.className=STAGE_COL[s]||''; }
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+
+  const logEl = document.getElementById('hazard-log');
+  if (!hazardLog.length) { logEl.innerHTML='<div class="haz-none">No hazards detected yet.</div>'; }
+  else logEl.innerHTML = hazardLog.map(h=>`<div class="${h.cls}">C${h.cycle}: ${h.msg}</div>`).join('');
+
+  const rg = document.getElementById('reg-grid'); rg.innerHTML = '';
+  for (let r=0; r<NUM_REGS; r++) {
+    const c = document.createElement('div');
+    c.className = 'reg-cell' + (regDirty[r] ? ' dirty' : '');
+    c.innerHTML = `<span class="reg-name">R${r}</span>${regFile[r]}`;
+    rg.appendChild(c);
+  }
+}
+
+loadInstructions();
+</script>
+</body>
+</html>
